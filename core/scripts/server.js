@@ -1,9 +1,12 @@
+const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const express = require('express')
 const compile = require('lodash.template')
 const rootPath = require('app-root-path').path
 const resolve = file => path.resolve(rootPath, file)
+
+const bodyParser = require('body-parser')
 
 const cache = require('./utils/cache-instance')
 const apiStatus = require('./utils/api-status')
@@ -114,161 +117,170 @@ app.use('/service-worker.js', serve('dist/service-worker.js', {
   setHeaders: {'Content-Type': 'text/javascript; charset=UTF-8'}
 }))
 
+app.use(bodyParser.urlencoded({ extended: false }))
+app.use(bodyParser.json())
+
+const server = new http.Server(app)
 const serverExtensions = require(resolve('src/server'))
-serverExtensions.registerUserServerRoutes(app)
 
-app.post('/invalidate', invalidateCache)
+async function init () {
+  await serverExtensions.registerUserServerRoutes(app, server)
 
-app.get('/invalidate', invalidateCache)
+  app.post('/invalidate', invalidateCache)
 
-app.get('*', (req, res, next) => {
-  const s = Date.now()
-  const errorHandler = err => {
-    if (err && err.code === 404) {
-      res.redirect('/page-not-found')
-    } else {
-      res.redirect('/error')
-      console.error(`Error during render : ${req.url}`)
-      console.error(err)
-      next()
-    }
-  }
+  app.get('/invalidate', invalidateCache)
 
-  const dynamicRequestHandler = renderer => {
-    if (!renderer) {
-      res.setHeader('Content-Type', 'text/html')
-      res.status(202).end(HTMLContent)
-      return next()
-    }
-    const context = {
-      url: req.url,
-      output: {
-        prepend: (context) => { return '' }, // these functions can be replaced in the Vue components to append or prepend some content AFTER all other things are rendered. So in this function You may call: output.prepend() { return context.renderStyles() } to attach styles
-        append: (context) => { return '' },
-        appendHead: (context) => { return '' },
-        template: 'default',
-        cacheTags: null
-      },
-      server: {
-        app: app,
-        response: res,
-        request: req
-      },
-      meta: null,
-      vs: {
-        config: config,
-        storeCode: req.header('x-vs-store-code') ? req.header('x-vs-store-code') : process.env.STORE_CODE
+  app.get('*', (req, res, next) => {
+    const s = Date.now()
+    const errorHandler = err => {
+      if (err && err.code === 404) {
+        res.redirect('/page-not-found')
+      } else {
+        res.redirect('/error')
+        console.error(`Error during render : ${req.url}`)
+        console.error(err)
+        next()
       }
     }
-    renderer.renderToString(context).then(output => {
-      if (!res.get('content-type')) {
+
+    const dynamicRequestHandler = renderer => {
+      if (!renderer) {
         res.setHeader('Content-Type', 'text/html')
+        res.status(202).end(HTMLContent)
+        return next()
       }
-      let tagsArray = []
-      if (config.server.useOutputCacheTagging && context.output.cacheTags !== null) {
-        tagsArray = Array.from(context.output.cacheTags)
-        const cacheTags = tagsArray.join(' ')
-        res.setHeader('X-VS-Cache-Tags', cacheTags)
-        console.log(`cache tags for the request: ${cacheTags}`)
-      }
-      const contentPrepend = (typeof context.output.prepend === 'function') ? context.output.prepend(context) : ''
-      const contentAppend = (typeof context.output.append === 'function') ? context.output.append(context) : ''
-
-      output = contentPrepend + output + contentAppend
-      if (context.output.template) { // case when we've got the template name back from vue app
-        if (!isProd) context.output.template = 'default' // in dev mode we can not use pre-rendered HTML templates
-        if (templatesCache[context.output.template]) { // please look at: https://github.com/vuejs/vue/blob/79cabadeace0e01fb63aa9f220f41193c0ca93af/src/server/template-renderer/index.js#L87 for reference
-          output = templatesCache[context.output.template](context).replace('<!--vue-ssr-outlet-->', output)
-        } else {
-          throw new Error(`The given template name ${context.output.template} does not exist`)
+      const context = {
+        url: req.url,
+        output: {
+          prepend: (context) => { return '' }, // these functions can be replaced in the Vue components to append or prepend some content AFTER all other things are rendered. So in this function You may call: output.prepend() { return context.renderStyles() } to attach styles
+          append: (context) => { return '' },
+          appendHead: (context) => { return '' },
+          template: 'default',
+          cacheTags: null
+        },
+        server: {
+          app: app,
+          response: res,
+          request: req
+        },
+        meta: null,
+        vs: {
+          config: config,
+          storeCode: req.header('x-vs-store-code') ? req.header('x-vs-store-code') : process.env.STORE_CODE
         }
       }
-      if (config.server.useOutputCache && cache) {
-        cache.set(
-          'page:' + req.url,
-          { headers: res.getHeaders(), body: output },
-          tagsArray
-        ).catch(errorHandler)
-      }
-      res.end(output)
-      console.log(`whole request [${req.url}]: ${Date.now() - s}ms`)
-      next()
-    }).catch(errorHandler)
-  }
+      renderer.renderToString(context).then(output => {
+        if (!res.get('content-type')) {
+          res.setHeader('Content-Type', 'text/html')
+        }
+        let tagsArray = []
+        if (config.server.useOutputCacheTagging && context.output.cacheTags !== null) {
+          tagsArray = Array.from(context.output.cacheTags)
+          const cacheTags = tagsArray.join(' ')
+          res.setHeader('X-VS-Cache-Tags', cacheTags)
+          console.log(`cache tags for the request: ${cacheTags}`)
+        }
+        const contentPrepend = (typeof context.output.prepend === 'function') ? context.output.prepend(context) : ''
+        const contentAppend = (typeof context.output.append === 'function') ? context.output.append(context) : ''
 
-  const dynamicCacheHandler = () => {
-    if (config.server.useOutputCache && cache) {
-      cache.get(
-        'page:' + req.url
-      ).then(output => {
-        if (output !== null) {
-          if (output.headers) {
-            for (const header of Object.keys(output.headers)) {
-              res.setHeader(header, output.headers[header])
-            }
+        output = contentPrepend + output + contentAppend
+        if (context.output.template) { // case when we've got the template name back from vue app
+          if (!isProd) context.output.template = 'default' // in dev mode we can not use pre-rendered HTML templates
+          if (templatesCache[context.output.template]) { // please look at: https://github.com/vuejs/vue/blob/79cabadeace0e01fb63aa9f220f41193c0ca93af/src/server/template-renderer/index.js#L87 for reference
+            output = templatesCache[context.output.template](context).replace('<!--vue-ssr-outlet-->', output)
+          } else {
+            throw new Error(`The given template name ${context.output.template} does not exist`)
           }
-          res.setHeader('X-VS-Cache', 'Hit')
-          if (output.body) {
-            res.end(output.body)
+        }
+        if (config.server.useOutputCache && cache) {
+          cache.set(
+            'page:' + req.url,
+            { headers: res.getHeaders(), body: output },
+            tagsArray
+          ).catch(errorHandler)
+        }
+        res.end(output)
+        console.log(`whole request [${req.url}]: ${Date.now() - s}ms`)
+        next()
+      }).catch(errorHandler)
+    }
+
+    const dynamicCacheHandler = () => {
+      if (config.server.useOutputCache && cache) {
+        cache.get(
+          'page:' + req.url
+        ).then(output => {
+          if (output !== null) {
+            if (output.headers) {
+              for (const header of Object.keys(output.headers)) {
+                res.setHeader(header, output.headers[header])
+              }
+            }
+            res.setHeader('X-VS-Cache', 'Hit')
+            if (output.body) {
+              res.end(output.body)
+            } else {
+              res.setHeader('Content-Type', 'text/html')
+              res.end(output.body)
+            }
+            res.end(output)
+            console.log(`cache hit [${req.url}], cached request: ${Date.now() - s}ms`)
+            next()
           } else {
             res.setHeader('Content-Type', 'text/html')
-            res.end(output.body)
+            res.setHeader('X-VS-Cache', 'Miss')
+            console.log(`cache miss [${req.url}], request: ${Date.now() - s}ms`)
+            dynamicRequestHandler(renderer) // render response
           }
-          res.end(output)
-          console.log(`cache hit [${req.url}], cached request: ${Date.now() - s}ms`)
-          next()
-        } else {
-          res.setHeader('Content-Type', 'text/html')
-          res.setHeader('X-VS-Cache', 'Miss')
-          console.log(`cache miss [${req.url}], request: ${Date.now() - s}ms`)
-          dynamicRequestHandler(renderer) // render response
-        }
-      }).catch(errorHandler)
-    } else {
-      dynamicRequestHandler(renderer)
+        }).catch(errorHandler)
+      } else {
+        dynamicRequestHandler(renderer)
+      }
     }
-  }
 
-  if (config.server.dynamicConfigReload) {
-    delete require.cache[require.resolve('config')]
-    config = require('config') // reload config
-    if (typeof serverExtensions.configProvider === 'function') {
-      serverExtensions.configProvider(req).then(loadedConfig => {
-        config = Object.assign(config, loadedConfig) // merge loaded conf with build time conf
-        dynamicCacheHandler()
-      }).catch(error => {
-        if (config.server.dynamicConfigContinueOnError) {
-          dynamicCacheHandler()
-        } else {
-          console.log('config provider error:', error)
-          if (req.url !== '/error') {
-            res.redirect('/error')
-          }
-          dynamicCacheHandler()
-        }
-      })
-    } else {
+    if (config.server.dynamicConfigReload) {
+      delete require.cache[require.resolve('config')]
       config = require('config') // reload config
+      if (typeof serverExtensions.configProvider === 'function') {
+        serverExtensions.configProvider(req).then(loadedConfig => {
+          config = Object.assign(config, loadedConfig) // merge loaded conf with build time conf
+          dynamicCacheHandler()
+        }).catch(error => {
+          if (config.server.dynamicConfigContinueOnError) {
+            dynamicCacheHandler()
+          } else {
+            console.log('config provider error:', error)
+            if (req.url !== '/error') {
+              res.redirect('/error')
+            }
+            dynamicCacheHandler()
+          }
+        })
+      } else {
+        config = require('config') // reload config
+        dynamicCacheHandler()
+      }
+    } else {
       dynamicCacheHandler()
     }
-  } else {
-    dynamicCacheHandler()
-  }
-})
+  })
 
-let port = process.env.PORT || config.server.port
-const host = process.env.HOST || config.server.host
-const start = () => {
-  app.listen(port, host)
-    .on('listening', () => {
-      console.log(`Vue Storefront Server started at http://${host}:${port}`)
-    })
-    .on('error', (e) => {
-      if (e.code === 'EADDRINUSE') {
-        port = parseInt(port) + 1
-        console.log(`The port is already in use, trying ${port}`)
-        start()
-      }
-    })
+  let port = process.env.PORT || config.server.port
+  const host = process.env.HOST || config.server.host
+  const start = () => {
+    server.listen(port, host)
+      .on('listening', () => {
+        console.log(`Vue Storefront Server started at http://${host}:${port}`)
+      })
+      .on('error', (e) => {
+        if (e.code === 'EADDRINUSE') {
+          port = parseInt(port) + 1
+          console.log(`The port is already in use, trying ${port}`)
+          start()
+        }
+      })
+  }
+  start()
 }
-start()
+
+init()

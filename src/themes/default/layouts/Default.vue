@@ -3,6 +3,7 @@
     <overlay v-if="overlayActive"/>
     <loader/>
     <div id="viewport" class="w-100 relative">
+
       <main-header/>
       <async-sidebar
         :async-component="SearchPanel"
@@ -29,6 +30,7 @@
       <main-footer/>
       <notification/>
       <sign-up/>
+      <qr-modal/>
       <cookie-notification/>
       <offline-badge/>
       <order-confirmation :orders-data="ordersData" v-if="loadOrderConfirmation"/>
@@ -50,6 +52,7 @@ import Notification from 'theme/components/core/Notification.vue'
 import SignUp from 'theme/components/core/blocks/Auth/SignUp.vue'
 import CookieNotification from 'theme/components/core/CookieNotification.vue'
 import OfflineBadge from 'theme/components/core/OfflineBadge.vue'
+import QrModal from 'theme/components/core/blocks/Checkout/QrModal.vue'
 import Head from 'theme/head'
 
 const SidebarMenu = () => import(/* webpackPreload: true */ /* webpackChunkName: "vsf-sidebar-menu" */ 'theme/components/core/blocks/SidebarMenu/SidebarMenu.vue')
@@ -119,7 +122,8 @@ export default {
     CookieNotification,
     OfflineBadge,
     OrderConfirmation,
-    AsyncSidebar
+    AsyncSidebar,
+    QrModal
   }
 }
 </script>
