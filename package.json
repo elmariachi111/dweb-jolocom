@@ -41,7 +41,9 @@
     "test:e2e": "cypress open",
     "test:e2e:ci": "cypress run",
     "lint": "eslint --ext .js,.vue core src",
-    "lerna": "lerna"
+    "lerna": "lerna",
+    "redis:start": "redis-server &",
+    "redis:stop": "redis-cli SHUTDOWN"
   },
   "dependencies": {
     "@types/webpack": "^4.4.23",
@@ -57,13 +59,17 @@
     "graphql": "^0.13.2",
     "graphql-tag": "^2.9.2",
     "isomorphic-fetch": "^2.2.1",
+    "jolocom-lib": "^2.3.0",
     "js-sha3": "^0.8.0",
     "localforage": "^1.7.2",
     "magento2-rest-client": "github:DivanteLtd/magento2-rest-client",
     "pm2": "^2.10.4",
+    "redis": "^2.8.0",
     "redis-tag-cache": "^1.2.1",
     "reflect-metadata": "^0.1.12",
     "register-service-worker": "^1.5.2",
+    "socket.io": "^1.4.38",
+    "socket.io-client": "^1.4.32",
     "ts-node": "^7.0.1",
     "vue": "^2.6.6",
     "vue-analytics": "^5.16.1",
@@ -180,5 +186,6 @@
     "src/themes/*",
     "docs",
     "core/modules/*"
-  ]
+  ],
+  "version": "0.0.0"
 }
